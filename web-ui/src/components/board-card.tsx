@@ -191,6 +191,7 @@ export function BoardCard({
 	onStart,
 	onMoveToTrash,
 	onRestoreFromTrash,
+	onDeleteFromTrash,
 	onCommit,
 	onOpenPr,
 	onCancelAutomaticAction,
@@ -213,6 +214,7 @@ export function BoardCard({
 	onStart?: (taskId: string) => void;
 	onMoveToTrash?: (taskId: string) => void;
 	onRestoreFromTrash?: (taskId: string) => void;
+	onDeleteFromTrash?: (taskId: string) => void;
 	onCommit?: (taskId: string) => void;
 	onOpenPr?: (taskId: string) => void;
 	onCancelAutomaticAction?: (taskId: string) => void;
@@ -528,28 +530,43 @@ export function BoardCard({
 										}}
 									/>
 								) : columnId === "trash" ? (
-									<Tooltip
-										side="bottom"
-										content={
-											<>
-												Restore session
-												<br />
-												in new worktree
-											</>
-										}
-									>
-										<Button
-											icon={<RotateCcw size={12} />}
-											variant="ghost"
-											size="sm"
-											aria-label="Restore task from trash"
-											onMouseDown={stopEvent}
-											onClick={(event) => {
-												stopEvent(event);
-												onRestoreFromTrash?.(card.id);
-											}}
-										/>
-									</Tooltip>
+									<>
+										<Tooltip
+											side="bottom"
+											content={
+												<>
+													Restore session
+													<br />
+													in new worktree
+												</>
+											}
+										>
+											<Button
+												icon={<RotateCcw size={12} />}
+												variant="ghost"
+												size="sm"
+												aria-label="Restore task from trash"
+												onMouseDown={stopEvent}
+												onClick={(event) => {
+													stopEvent(event);
+													onRestoreFromTrash?.(card.id);
+												}}
+											/>
+										</Tooltip>
+										<Tooltip side="bottom" content="Delete permanently">
+											<Button
+												icon={<Trash2 size={12} />}
+												variant="ghost"
+												size="sm"
+												aria-label="Delete task permanently"
+												onMouseDown={stopEvent}
+												onClick={(event) => {
+													stopEvent(event);
+													onDeleteFromTrash?.(card.id);
+												}}
+											/>
+										</Tooltip>
+									</>
 								) : null}
 							</div>
 							{displayPromptSplit.description ? (
