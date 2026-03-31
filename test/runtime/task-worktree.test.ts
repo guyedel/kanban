@@ -14,6 +14,7 @@ const childProcessMocks = vi.hoisted(() => ({
 const lockedFileSystemMocks = vi.hoisted(() => ({
 	withLock: vi.fn(),
 	writeTextFileAtomic: vi.fn(),
+	writeJsonFileAtomic: vi.fn(),
 }));
 
 const workspaceStateMocks = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ vi.mock("../../src/fs/locked-file-system.js", () => ({
 	lockedFileSystem: {
 		withLock: lockedFileSystemMocks.withLock,
 		writeTextFileAtomic: lockedFileSystemMocks.writeTextFileAtomic,
+		writeJsonFileAtomic: lockedFileSystemMocks.writeJsonFileAtomic,
 	},
 }));
 
@@ -129,9 +131,12 @@ describe.sequential("task-worktree serialization", () => {
 			},
 		);
 		lockedFileSystemMocks.writeTextFileAtomic.mockResolvedValue(undefined);
+		lockedFileSystemMocks.writeJsonFileAtomic.mockResolvedValue(undefined);
 	});
 
-	afterEach(() => {
+	afterEach(async () => {
+		const { slotPoolRegistry } = await import("../../src/workspace/worktree-slot-pool");
+		slotPoolRegistry.clear();
 		vi.clearAllMocks();
 	});
 
@@ -258,14 +263,16 @@ describe.sequential("task-worktree serialization", () => {
 				}),
 			]);
 
-			const firstLockRequest = lockedFileSystemMocks.withLock.mock.calls[0]?.[0] as {
-				path: string;
-				type: string;
-				lockfileName: string;
-			};
 			expect(first, JSON.stringify(first, null, 2)).toMatchObject({ ok: true, baseCommit: "base-commit" });
 			expect(second, JSON.stringify(second, null, 2)).toMatchObject({ ok: true, baseCommit: "base-commit" });
-			expect(firstLockRequest).toMatchObject({
+
+			// Find the worktree setup lock calls (pool lock calls are also present)
+			const setupLockCalls = lockedFileSystemMocks.withLock.mock.calls.filter((call: unknown[]) => {
+				const req = call[0] as { lockfileName?: string };
+				return req?.lockfileName === "kanban-task-worktree-setup.lock";
+			});
+			expect(setupLockCalls.length).toBeGreaterThan(0);
+			expect(setupLockCalls[0][0]).toMatchObject({
 				path: join(repoPath, ".git"),
 				type: "directory",
 				lockfileName: "kanban-task-worktree-setup.lock",

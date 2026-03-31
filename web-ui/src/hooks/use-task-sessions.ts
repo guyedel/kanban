@@ -31,6 +31,8 @@ interface UseTaskSessionsInput {
 interface EnsureTaskWorkspaceResult {
 	ok: boolean;
 	message?: string;
+	errorCode?: string;
+	poolMaxSlots?: number;
 	response?: Extract<RuntimeWorktreeEnsureResponse, { ok: true }>;
 }
 
@@ -133,6 +135,8 @@ export function useTaskSessions({ currentProjectId, setSessions }: UseTaskSessio
 					return {
 						ok: false,
 						message: payload.error ?? "Worktree setup failed.",
+						errorCode: payload.errorCode,
+						poolMaxSlots: payload.poolMaxSlots,
 					};
 				}
 				return { ok: true, response: payload };

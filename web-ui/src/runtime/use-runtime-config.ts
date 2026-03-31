@@ -17,6 +17,7 @@ export interface UseRuntimeConfigResult {
 		readyForReviewNotificationsEnabled?: boolean;
 		commitPromptTemplate?: string;
 		openPrPromptTemplate?: string;
+		worktreePool?: { enabled?: boolean; maxSlots?: number; cleanupStrategy?: "checkout-clean" | "hard-reset" };
 	}) => Promise<RuntimeConfigResponse | null>;
 }
 
@@ -84,6 +85,7 @@ export function useRuntimeConfig(
 			readyForReviewNotificationsEnabled?: boolean;
 			commitPromptTemplate?: string;
 			openPrPromptTemplate?: string;
+			worktreePool?: { enabled?: boolean; maxSlots?: number; cleanupStrategy?: "checkout-clean" | "hard-reset" };
 		}): Promise<RuntimeConfigResponse | null> => {
 			setIsSaving(true);
 			try {

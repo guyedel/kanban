@@ -33,6 +33,7 @@ import {
 	getTaskWorkspaceInfo,
 	resolveTaskCwd,
 } from "../workspace/task-worktree";
+import { getPoolForPath, slotPoolRegistry } from "../workspace/worktree-slot-pool";
 import type { RuntimeTrpcContext } from "./app-router";
 
 export interface CreateWorkspaceApiDependencies {
@@ -340,6 +341,29 @@ export function createWorkspaceApi(deps: CreateWorkspaceApiDependencies): Runtim
 				taskId: normalizedInput.taskId,
 				baseRef: normalizedInput.baseRef,
 			});
+		},
+		getPoolStats: async (workspaceScope) => {
+			const pool = await getPoolForPath(workspaceScope.workspacePath);
+			return pool?.getPoolStats() ?? null;
+		},
+		resetPool: async (workspaceScope) => {
+			const pool = await getPoolForPath(workspaceScope.workspacePath);
+			if (!pool) {
+				return { ok: true, message: "No pool active." };
+			}
+			const stats = pool.getPoolStats();
+			if (stats.claimed > 0) {
+				return { ok: false, message: `Cannot reset: ${stats.claimed} slot(s) still in use.` };
+			}
+			await pool.shutdown();
+			// Remove from registry — next access creates fresh pool
+			for (const [key, p] of slotPoolRegistry) {
+				if (p === pool) {
+					slotPoolRegistry.delete(key);
+					break;
+				}
+			}
+			return { ok: true, message: "Pool reset. Slots will be recreated on next task start." };
 		},
 		searchFiles: async (workspaceScope, input) => {
 			const query = input.query.trim();

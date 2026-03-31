@@ -71,7 +71,15 @@ interface UseBoardInteractionsInput {
 	runAutoReviewGitAction: (taskId: string, action: TaskGitAction) => Promise<boolean>;
 }
 
+export interface PoolExhaustionState {
+	open: boolean;
+	maxSlots: number;
+	retryTaskId: string | null;
+}
+
 export interface UseBoardInteractionsResult {
+	poolExhaustion: PoolExhaustionState;
+	setPoolExhaustionOpen: (open: boolean) => void;
 	handleProgrammaticCardMoveReady: ReturnType<typeof useProgrammaticCardMoves>["handleProgrammaticCardMoveReady"];
 	confirmMoveTaskToTrash: (task: BoardCard, currentBoard?: BoardData) => Promise<void>;
 	handleCreateDependency: (fromTaskId: string, toTaskId: string) => void;
@@ -121,6 +129,11 @@ export function useBoardInteractions({
 		Record<string, PendingProgrammaticStartMoveCompletion>
 	>({});
 	const [moveToTrashLoadingById, setMoveToTrashLoadingById] = useState<Record<string, boolean>>({});
+	const [poolExhaustion, setPoolExhaustion] = useState<PoolExhaustionState>({
+		open: false,
+		maxSlots: 3,
+		retryTaskId: null,
+	});
 	const {
 		handleProgrammaticCardMoveReady,
 		setRequestMoveTaskToTrashHandler,
@@ -292,7 +305,6 @@ export function useBoardInteractions({
 			const optimisticMove = options?.optimisticMove ?? true;
 			const ensured = await ensureTaskWorkspace(task);
 			if (!ensured.ok) {
-				notifyError(ensured.message ?? "Could not set up task workspace.");
 				if (optimisticMove) {
 					setBoard((currentBoard) => {
 						const currentColumnId = getTaskColumnId(currentBoard, taskId);
@@ -302,6 +314,11 @@ export function useBoardInteractions({
 						const reverted = moveTaskToColumn(currentBoard, taskId, fromColumnId);
 						return reverted.moved ? reverted.board : currentBoard;
 					});
+				}
+				if (ensured.errorCode === "POOL_EXHAUSTED") {
+					setPoolExhaustion({ open: true, maxSlots: ensured.poolMaxSlots ?? 3, retryTaskId: task.id });
+				} else {
+					notifyError(ensured.message ?? "Could not set up task workspace.");
 				}
 				return false;
 			}
@@ -874,7 +891,13 @@ export function useBoardInteractions({
 		resetBoardInteractionsState();
 	}, [currentProjectId, resetBoardInteractionsState]);
 
+	const setPoolExhaustionOpen = useCallback((open: boolean) => {
+		setPoolExhaustion((prev) => ({ ...prev, open, retryTaskId: open ? prev.retryTaskId : null }));
+	}, []);
+
 	return {
+		poolExhaustion,
+		setPoolExhaustionOpen,
 		handleProgrammaticCardMoveReady,
 		confirmMoveTaskToTrash,
 		handleCreateDependency,

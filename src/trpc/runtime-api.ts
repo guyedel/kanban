@@ -40,6 +40,7 @@ import { buildRuntimeConfigResponse, resolveAgentCommand } from "../terminal/age
 import type { TerminalSessionManager } from "../terminal/session-manager";
 import { resolveTaskCwd } from "../workspace/task-worktree";
 import { captureTaskTurnCheckpoint } from "../workspace/turn-checkpoints";
+import { getPoolForPath } from "../workspace/worktree-slot-pool";
 import type { RuntimeTrpcContext, RuntimeTrpcWorkspaceScope } from "./app-router";
 
 export interface CreateRuntimeApiDependencies {
@@ -112,7 +113,18 @@ export function createRuntimeApi(deps: CreateRuntimeApiDependencies): RuntimeTrp
 			} else {
 				throw new Error("No active runtime config provider is available.");
 			}
-			return buildConfigResponse(scopedRuntimeConfig);
+			const response = buildConfigResponse(scopedRuntimeConfig);
+			if (workspaceScope) {
+				try {
+					const pool = await getPoolForPath(workspaceScope.workspacePath);
+					if (pool) {
+						response.worktreePoolStats = pool.getPoolStats();
+					}
+				} catch {
+					// Pool stats are optional — don't fail config load
+				}
+			}
+			return response;
 		},
 		saveConfig: async (workspaceScope, input) => {
 			const parsed = parseRuntimeConfigSaveRequest(input);

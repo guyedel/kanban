@@ -1,6 +1,5 @@
 import { Draggable } from "@hello-pangea/dnd";
 import { formatClineToolCallLabel } from "@runtime-cline-tool-call-display";
-import { buildTaskWorktreeDisplayPath } from "@runtime-task-worktree-path";
 import { AlertCircle, GitBranch, Play, RotateCcw, Trash2 } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -42,15 +41,9 @@ const DESCRIPTION_EXPAND_LABEL = "See more";
 const DESCRIPTION_COLLAPSE_LABEL = "Less";
 const DESCRIPTION_COLLAPSE_SUFFIX = `… ${DESCRIPTION_EXPAND_LABEL}`;
 
-function reconstructTaskWorktreeDisplayPath(taskId: string, workspacePath: string | null | undefined): string | null {
-	if (!workspacePath) {
-		return null;
-	}
-	try {
-		return buildTaskWorktreeDisplayPath(taskId, workspacePath);
-	} catch {
-		return null;
-	}
+function reconstructTaskWorktreeDisplayPath(taskId: string): string | null {
+	const normalized = taskId.trim();
+	return normalized ? `~/.cline/worktrees/…/${normalized}` : null;
 }
 
 function extractToolInputSummaryFromActivityText(activityText: string, toolName: string): string | null {
@@ -129,7 +122,7 @@ function getCardSessionActivity(summary: RuntimeTaskSessionSummary | undefined):
 	const activityText = hookActivity?.activityText?.trim();
 	const toolName = hookActivity?.toolName?.trim() ?? null;
 	const toolInputSummary = hookActivity?.toolInputSummary?.trim() ?? null;
-	const source = hookActivity?.source?.trim() ?? null;
+	const _source = hookActivity?.source?.trim() ?? null;
 	const finalMessage = hookActivity?.finalMessage?.trim();
 	const hookEventName = hookActivity?.hookEventName?.trim() ?? null;
 	if (summary.state === "awaiting_review" && finalMessage) {
@@ -209,7 +202,7 @@ export function BoardCard({
 	isDependencySource = false,
 	isDependencyTarget = false,
 	isDependencyLinking = false,
-	workspacePath,
+	workspacePath: _workspacePath,
 }: {
 	card: BoardCardModel;
 	index: number;
@@ -406,7 +399,7 @@ export function BoardCard({
 	const reviewWorkspacePath = reviewWorkspaceSnapshot
 		? formatPathForDisplay(reviewWorkspaceSnapshot.path)
 		: isTrashCard
-			? reconstructTaskWorktreeDisplayPath(card.id, workspacePath)
+			? reconstructTaskWorktreeDisplayPath(card.id)
 			: null;
 	const reviewRefLabel = reviewWorkspaceSnapshot?.branch ?? reviewWorkspaceSnapshot?.headCommit?.slice(0, 8) ?? "HEAD";
 	const reviewChangeSummary = reviewWorkspaceSnapshot
