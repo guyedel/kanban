@@ -282,6 +282,10 @@ export interface RuntimeTrpcContext {
 			scope: RuntimeTrpcWorkspaceScope,
 			input: RuntimeTaskWorkspaceInfoRequest,
 		) => Promise<RuntimeTaskWorkspaceInfoResponse>;
+		getPoolStats: (
+			scope: RuntimeTrpcWorkspaceScope,
+		) => Promise<import("../workspace/worktree-slot-pool").PoolStats | null>;
+		resetPool: (scope: RuntimeTrpcWorkspaceScope) => Promise<{ ok: boolean; message: string }>;
 		searchFiles: (
 			scope: RuntimeTrpcWorkspaceScope,
 			input: RuntimeWorkspaceFileSearchRequest,
@@ -558,6 +562,12 @@ export const runtimeAppRouter = t.router({
 			.query(async ({ ctx, input }) => {
 				return await ctx.workspaceApi.loadTaskContext(ctx.workspaceScope, input);
 			}),
+		getPoolStats: workspaceProcedure.query(async ({ ctx }) => {
+			return await ctx.workspaceApi.getPoolStats(ctx.workspaceScope);
+		}),
+		resetPool: workspaceProcedure.mutation(async ({ ctx }) => {
+			return await ctx.workspaceApi.resetPool(ctx.workspaceScope);
+		}),
 		searchFiles: workspaceProcedure
 			.input(runtimeWorkspaceFileSearchRequestSchema)
 			.output(runtimeWorkspaceFileSearchResponseSchema)

@@ -12,6 +12,7 @@ import { DebugDialog } from "@/components/debug-dialog";
 import { AgentTerminalPanel } from "@/components/detail-panels/agent-terminal-panel";
 import { GitHistoryView } from "@/components/git-history-view";
 import { KanbanBoard } from "@/components/kanban-board";
+import { PoolExhaustionDialog } from "@/components/pool-exhaustion-dialog";
 import { ProjectNavigationPanel } from "@/components/project-navigation-panel";
 import { ResizableBottomPane } from "@/components/resizable-bottom-pane";
 import { RuntimeSettingsDialog, type RuntimeSettingsSection } from "@/components/runtime-settings-dialog";
@@ -547,6 +548,8 @@ export default function App(): ReactElement {
 	}, []);
 
 	const {
+		poolExhaustion,
+		setPoolExhaustionOpen,
 		handleProgrammaticCardMoveReady,
 		handleCreateDependency,
 		handleDeleteDependency,
@@ -1056,6 +1059,17 @@ export default function App(): ReactElement {
 				taskCount={trashTaskCount}
 				onCancel={() => setIsClearTrashDialogOpen(false)}
 				onConfirm={handleConfirmClearTrash}
+			/>
+			<PoolExhaustionDialog
+				open={poolExhaustion.open}
+				onOpenChange={setPoolExhaustionOpen}
+				currentMaxSlots={poolExhaustion.maxSlots}
+				workspaceId={currentProjectId}
+				onRetry={() => {
+					if (poolExhaustion.retryTaskId) {
+						handleStartTask(poolExhaustion.retryTaskId);
+					}
+				}}
 			/>
 			<StartupOnboardingDialog
 				open={isStartupOnboardingDialogOpen}

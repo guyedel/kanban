@@ -3,6 +3,7 @@ import { updateTaskDependencies } from "../core/task-board-mutations";
 import { listWorkspaceIndexEntries, loadWorkspaceState, saveWorkspaceState } from "../state/workspace-state";
 import type { TerminalSessionManager } from "../terminal/session-manager";
 import { deleteTaskWorktree } from "../workspace/task-worktree";
+import { getPoolForPath, slotPoolRegistry } from "../workspace/worktree-slot-pool";
 import type { WorkspaceRegistry } from "./workspace-registry";
 import { collectProjectWorktreeTaskIdsForRemoval } from "./workspace-registry";
 
@@ -101,14 +102,26 @@ async function cleanupInterruptedTaskWorktrees(
 	if (taskIds.length === 0) {
 		return;
 	}
+
+	// Release pool slots for interrupted tasks (slots persist, just get cleaned)
+	const pool = await getPoolForPath(repoPath);
+
 	const deletions = await Promise.all(
-		taskIds.map(async (taskId) => ({
-			taskId,
-			deleted: await deleteTaskWorktree({
-				repoPath,
+		taskIds.map(async (taskId) => {
+			if (pool?.getSlotForTask(taskId)) {
+				try {
+					await pool.releaseSlot(taskId);
+					return { taskId, deleted: { ok: true, removed: true } as const };
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					return { taskId, deleted: { ok: false, removed: false, error: message } as const };
+				}
+			}
+			return {
 				taskId,
-			}),
-		})),
+				deleted: await deleteTaskWorktree({ repoPath, taskId }),
+			};
+		}),
 	);
 	for (const { taskId, deleted } of deletions) {
 		if (deleted.ok) {
@@ -217,6 +230,15 @@ export async function shutdownRuntimeServer(deps: RuntimeShutdownCoordinatorDepe
 			await cleanupInterruptedTaskWorktrees(workspace.workspacePath, worktreeTaskIds, deps.warn);
 		}),
 	);
+
+	// Persist all worktree pool states before server closes
+	for (const pool of slotPoolRegistry.values()) {
+		try {
+			await pool.shutdown();
+		} catch {
+			// Best-effort pool persistence
+		}
+	}
 
 	await deps.closeRuntimeServer();
 }

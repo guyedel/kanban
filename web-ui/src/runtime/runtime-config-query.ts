@@ -38,6 +38,7 @@ export async function saveRuntimeConfig(
 		readyForReviewNotificationsEnabled?: boolean;
 		commitPromptTemplate?: string;
 		openPrPromptTemplate?: string;
+		worktreePool?: { enabled?: boolean; maxSlots?: number; cleanupStrategy?: "checkout-clean" | "hard-reset" };
 	},
 ): Promise<RuntimeConfigResponse> {
 	const trpcClient = getRuntimeTrpcClient(workspaceId);

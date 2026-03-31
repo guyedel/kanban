@@ -464,6 +464,8 @@ export const runtimeWorktreeEnsureResponseSchema = z.union([
 		baseRef: z.string(),
 		baseCommit: z.null(),
 		error: z.string().optional(),
+		errorCode: z.enum(["POOL_EXHAUSTED"]).optional(),
+		poolMaxSlots: z.number().int().positive().optional(),
 	}),
 ]);
 export type RuntimeWorktreeEnsureResponse = z.infer<typeof runtimeWorktreeEnsureResponseSchema>;
@@ -730,6 +732,24 @@ export const runtimeAgentDefinitionSchema = z.object({
 });
 export type RuntimeAgentDefinition = z.infer<typeof runtimeAgentDefinitionSchema>;
 
+export const runtimeWorktreePoolStatsSchema = z.object({
+	total: z.number(),
+	claimed: z.number(),
+	unclaimed: z.number(),
+	released: z.number(),
+	corrupted: z.number(),
+	pendingCleanups: z.number(),
+});
+export type RuntimeWorktreePoolStats = z.infer<typeof runtimeWorktreePoolStatsSchema>;
+
+export const runtimeWorktreePoolConfigSchema = z
+	.object({
+		enabled: z.boolean().optional(),
+		maxSlots: z.number().int().positive().optional(),
+		cleanupStrategy: z.enum(["checkout-clean", "hard-reset"]).optional(),
+	})
+	.optional();
+
 export const runtimeConfigResponseSchema = z.object({
 	selectedAgentId: runtimeAgentIdSchema,
 	selectedShortcutLabel: z.string().nullable(),
@@ -747,6 +767,8 @@ export const runtimeConfigResponseSchema = z.object({
 	openPrPromptTemplate: z.string(),
 	commitPromptTemplateDefault: z.string(),
 	openPrPromptTemplateDefault: z.string(),
+	worktreePool: runtimeWorktreePoolConfigSchema,
+	worktreePoolStats: runtimeWorktreePoolStatsSchema.optional(),
 });
 export type RuntimeConfigResponse = z.infer<typeof runtimeConfigResponseSchema>;
 
@@ -758,6 +780,7 @@ export const runtimeConfigSaveRequestSchema = z.object({
 	readyForReviewNotificationsEnabled: z.boolean().optional(),
 	commitPromptTemplate: z.string().optional(),
 	openPrPromptTemplate: z.string().optional(),
+	worktreePool: runtimeWorktreePoolConfigSchema,
 });
 export type RuntimeConfigSaveRequest = z.infer<typeof runtimeConfigSaveRequestSchema>;
 

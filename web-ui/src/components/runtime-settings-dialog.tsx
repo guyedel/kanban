@@ -307,6 +307,11 @@ export function RuntimeSettingsDialog({
 	const [copiedVariableToken, setCopiedVariableToken] = useState<string | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [pendingShortcutScrollIndex, setPendingShortcutScrollIndex] = useState<number | null>(null);
+	const [worktreePoolEnabled, setWorktreePoolEnabled] = useState(true);
+	const [worktreePoolMaxSlots, setWorktreePoolMaxSlots] = useState(3);
+	const [worktreePoolCleanupStrategy, setWorktreePoolCleanupStrategy] = useState<"checkout-clean" | "hard-reset">(
+		"checkout-clean",
+	);
 	const copiedVariableResetTimerRef = useRef<number | null>(null);
 	const shortcutsSectionRef = useRef<HTMLHeadingElement | null>(null);
 	const shortcutRowRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -440,6 +445,9 @@ export function RuntimeSettingsDialog({
 		setShortcuts(config?.shortcuts ?? []);
 		setCommitPromptTemplate(config?.commitPromptTemplate ?? "");
 		setOpenPrPromptTemplate(config?.openPrPromptTemplate ?? "");
+		setWorktreePoolEnabled(config?.worktreePool?.enabled ?? true);
+		setWorktreePoolMaxSlots(config?.worktreePool?.maxSlots ?? 3);
+		setWorktreePoolCleanupStrategy(config?.worktreePool?.cleanupStrategy ?? "checkout-clean");
 		setSaveError(null);
 	}, [
 		config?.agentAutonomousModeEnabled,
@@ -448,6 +456,7 @@ export function RuntimeSettingsDialog({
 		config?.readyForReviewNotificationsEnabled,
 		config?.selectedAgentId,
 		config?.shortcuts,
+		config?.worktreePool,
 		fallbackAgentId,
 		open,
 	]);
@@ -569,6 +578,11 @@ export function RuntimeSettingsDialog({
 			shortcuts,
 			commitPromptTemplate,
 			openPrPromptTemplate,
+			worktreePool: {
+				enabled: worktreePoolEnabled,
+				maxSlots: worktreePoolMaxSlots,
+				cleanupStrategy: worktreePoolCleanupStrategy,
+			},
 		});
 		if (!saved) {
 			setSaveError("Could not save runtime settings. Check runtime logs and try again.");
@@ -739,6 +753,71 @@ export function RuntimeSettingsDialog({
 						/>
 					) : null}
 				</div>
+
+				<h6 className="font-semibold text-text-primary mt-4 mb-2">Worktree Pool</h6>
+				<div className="flex items-center gap-2">
+					<RadixSwitch.Root
+						checked={worktreePoolEnabled}
+						disabled={controlsDisabled}
+						onCheckedChange={setWorktreePoolEnabled}
+						className="relative h-5 w-9 rounded-full bg-surface-4 data-[state=checked]:bg-accent cursor-pointer disabled:opacity-40"
+					>
+						<RadixSwitch.Thumb className="block h-4 w-4 rounded-full bg-white shadow-sm transition-transform translate-x-0.5 data-[state=checked]:translate-x-[18px]" />
+					</RadixSwitch.Root>
+					<span className="text-[13px] text-text-primary">Reuse worktree slots across tasks</span>
+				</div>
+				{worktreePoolEnabled ? (
+					<>
+						<div className="flex items-center gap-3 mt-3">
+							<label className="text-[13px] text-text-secondary" htmlFor="pool-max-slots">
+								Maximum slots
+							</label>
+							<input
+								id="pool-max-slots"
+								type="number"
+								min={1}
+								max={20}
+								value={worktreePoolMaxSlots}
+								disabled={controlsDisabled}
+								onChange={(e) => {
+									const val = Number.parseInt(e.target.value, 10);
+									if (Number.isFinite(val) && val >= 1 && val <= 20) {
+										setWorktreePoolMaxSlots(val);
+									}
+								}}
+								className="h-8 w-20 rounded-md border border-border bg-surface-2 px-2 text-[13px] text-text-primary text-center focus:border-border-focus focus:outline-none disabled:opacity-40"
+							/>
+						</div>
+						<div className="flex items-center gap-3 mt-2">
+							<label className="text-[13px] text-text-secondary" htmlFor="pool-cleanup-strategy">
+								Cleanup strategy
+							</label>
+							<select
+								id="pool-cleanup-strategy"
+								value={worktreePoolCleanupStrategy}
+								disabled={controlsDisabled}
+								onChange={(e) =>
+									setWorktreePoolCleanupStrategy(e.target.value as "checkout-clean" | "hard-reset")
+								}
+								className="h-8 rounded-md border border-border bg-surface-2 px-2 text-[13px] text-text-primary focus:border-border-focus focus:outline-none disabled:opacity-40"
+							>
+								<option value="checkout-clean">Checkout + Clean</option>
+								<option value="hard-reset">Hard Reset</option>
+							</select>
+						</div>
+						<p className="text-text-tertiary text-xs mt-2 mb-0 font-mono">~/.cline/worktrees/.pools/</p>
+						{config?.worktreePoolStats ? (
+							<div className="flex items-center gap-3 mt-2">
+								<span className="text-[12px] text-text-secondary">
+									{config.worktreePoolStats.claimed}/{config.worktreePoolStats.total} slots in use
+									{config.worktreePoolStats.corrupted > 0
+										? ` · ${config.worktreePoolStats.corrupted} corrupted`
+										: ""}
+								</span>
+							</div>
+						) : null}
+					</>
+				) : null}
 
 				<h5 className="font-semibold text-text-primary mt-4 mb-0">Project</h5>
 				<p

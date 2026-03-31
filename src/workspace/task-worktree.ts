@@ -1,6 +1,6 @@
 import { access, lstat, mkdir, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
-
+import { loadGlobalRuntimeConfig } from "../config/runtime-config";
 import type {
 	RuntimeTaskWorkspaceInfoResponse,
 	RuntimeWorktreeDeleteResponse,
@@ -11,6 +11,13 @@ import { getRuntimeHomePath, getTaskWorktreesHomePath, loadWorkspaceContext } fr
 import { getGitCommandErrorMessage, getGitStdout, readGitHeadInfo, runGit } from "./git-utils";
 import { getWorkspaceFolderLabelForWorktreePath, normalizeTaskIdForWorktreePath } from "./task-worktree-path";
 import { listTurbopackNodeModulesSymlinkSkipPaths } from "./task-worktree-turbopack";
+import {
+	getOrCreatePool,
+	getPoolForPath,
+	PoolExhaustedError,
+	resolveClaimedSlotPath,
+	type SlotClaimResult,
+} from "./worktree-slot-pool";
 
 const KANBAN_MANAGED_EXCLUDE_BLOCK_START = "# kanban-managed-symlinked-ignored-paths:start";
 const KANBAN_MANAGED_EXCLUDE_BLOCK_END = "# kanban-managed-symlinked-ignored-paths:end";
@@ -230,6 +237,23 @@ async function applyTaskPatch(patchPath: string, worktreePath: string): Promise<
 	await getGitStdout(["apply", "--binary", "--whitespace=nowarn", patchPath], worktreePath);
 }
 
+async function tryApplyStoredPatch(
+	storedPatch: { path: string; commit: string } | null,
+	baseCommit: string,
+	worktreePath: string,
+): Promise<string | undefined> {
+	if (!storedPatch || baseCommit !== storedPatch.commit) {
+		return undefined;
+	}
+	try {
+		await applyTaskPatch(storedPatch.path, worktreePath);
+		await rm(storedPatch.path, { force: true });
+		return undefined;
+	} catch (error) {
+		return `Saved task changes could not be reapplied automatically. ${getGitCommandErrorMessage(error)}`;
+	}
+}
+
 function shouldSkipSymlink(relativePath: string): boolean {
 	const segments = relativePath.split("/").filter((segment) => segment.length > 0);
 	if (segments.length === 0) {
@@ -435,32 +459,53 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 	try {
 		const context = await loadWorkspaceContext(options.cwd);
 		const taskId = normalizeTaskIdForWorktreePath(options.taskId);
-		const worktreePath = getTaskWorktreePath(context.repoPath, taskId);
-		// Investigation note: ensure is called on every task start. The previous implementation
-		// compared the worktree HEAD to the latest baseRef commit and recreated the worktree
-		// when the base branch advanced, which could destroy valid task progress. Existing
-		// worktrees are now treated as authoritative and only missing worktrees are created.
-		const existingResult = await runGit(worktreePath, ["rev-parse", "HEAD"]);
-		if (existingResult.ok && existingResult.stdout) {
-			await syncIgnoredPathsIntoWorktree(context.repoPath, worktreePath);
-			return {
-				ok: true,
-				path: worktreePath,
-				baseRef: options.baseRef.trim(),
-				baseCommit: existingResult.stdout,
-			};
+
+		// Claim a slot from the worktree pool (falls back to legacy if disabled/unavailable)
+		let pool: Awaited<ReturnType<typeof getOrCreatePool>> = null;
+		try {
+			const globalConfig = await loadGlobalRuntimeConfig();
+			pool = await getOrCreatePool(context.repoPath, globalConfig.worktreePool);
+		} catch {
+			// Config or pool initialization failed — fall back to legacy per-task worktree path
 		}
 
-		return await withTaskWorktreeSetupLock(context.repoPath, async () => {
-			const lockedExistingCommit = await tryRunGit(worktreePath, ["rev-parse", "HEAD"]);
-			if (lockedExistingCommit) {
+		let claim: SlotClaimResult | null = null;
+		let worktreePath: string;
+		if (pool) {
+			claim = await pool.claimSlot(taskId, options.baseRef.trim());
+			worktreePath = claim.path;
+		} else {
+			worktreePath = getTaskWorktreePath(context.repoPath, taskId);
+		}
+
+		// Idempotent: task already had this slot claimed, or legacy path — return existing worktree
+		if (!claim || claim.wasAlreadyClaimed) {
+			const existingResult = await runGit(worktreePath, ["rev-parse", "HEAD"]);
+			if (existingResult.ok && existingResult.stdout) {
 				await syncIgnoredPathsIntoWorktree(context.repoPath, worktreePath);
 				return {
 					ok: true,
 					path: worktreePath,
 					baseRef: options.baseRef.trim(),
-					baseCommit: lockedExistingCommit,
+					baseCommit: existingResult.stdout,
 				};
+			}
+			// Directory missing or corrupted — fall through to creation below
+		}
+
+		return await withTaskWorktreeSetupLock(context.repoPath, async () => {
+			// Post-lock re-check for idempotency (another process may have set it up)
+			if (!claim || claim.wasAlreadyClaimed) {
+				const lockedExistingCommit = await tryRunGit(worktreePath, ["rev-parse", "HEAD"]);
+				if (lockedExistingCommit) {
+					await syncIgnoredPathsIntoWorktree(context.repoPath, worktreePath);
+					return {
+						ok: true,
+						path: worktreePath,
+						baseRef: options.baseRef.trim(),
+						baseCommit: lockedExistingCommit,
+					};
+				}
 			}
 
 			const requestedBaseRef = options.baseRef.trim();
@@ -497,6 +542,27 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 			let baseCommit = storedPatch?.commit ?? requestedBaseCommit;
 			let warning: string | undefined;
 
+			// Recycled slot: fast-path reset of existing worktree to desired base
+			const lockedHeadCommit = await tryRunGit(worktreePath, ["rev-parse", "HEAD"]);
+			if (claim && !claim.isNew && !claim.wasAlreadyClaimed && lockedHeadCommit) {
+				const resetResult = await runGit(worktreePath, ["reset", "--hard", baseCommit]);
+				if (resetResult.ok) {
+					await runGit(worktreePath, ["clean", "-fd"]);
+					await syncIgnoredPathsIntoWorktree(context.repoPath, worktreePath);
+					warning = await tryApplyStoredPatch(storedPatch, baseCommit, worktreePath);
+
+					return {
+						ok: true,
+						path: worktreePath,
+						baseRef: requestedBaseRef,
+						baseCommit,
+						warning,
+					};
+				}
+				// Reset failed — fall through to full recreation below
+			}
+
+			// New or corrupted slot: create worktree from scratch
 			if (await pathExists(worktreePath)) {
 				await removeTaskWorktreeInternal(context.repoPath, worktreePath);
 			}
@@ -525,15 +591,7 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 				await getGitStdout(["worktree", "add", "--detach", worktreePath, baseCommit], context.repoPath);
 			}
 			await prepareNewTaskWorktree(context.repoPath, worktreePath);
-
-			if (storedPatch && baseCommit === storedPatch.commit) {
-				try {
-					await applyTaskPatch(storedPatch.path, worktreePath);
-					await rm(storedPatch.path, { force: true });
-				} catch (error) {
-					warning = `Saved task changes could not be reapplied automatically. ${getGitCommandErrorMessage(error)}`;
-				}
-			}
+			warning = (await tryApplyStoredPatch(storedPatch, baseCommit, worktreePath)) ?? warning;
 
 			return {
 				ok: true,
@@ -545,12 +603,14 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
+		const poolExhausted = error instanceof PoolExhaustedError;
 		return {
 			ok: false,
 			path: null,
 			baseRef: options.baseRef.trim(),
 			baseCommit: null,
 			error: message,
+			...(poolExhausted ? { errorCode: "POOL_EXHAUSTED", poolMaxSlots: error.maxSlots } : {}),
 		};
 	}
 }
@@ -561,6 +621,24 @@ export async function deleteTaskWorktree(options: {
 }): Promise<RuntimeWorktreeDeleteResponse> {
 	try {
 		const taskId = normalizeTaskIdForWorktreePath(options.taskId);
+
+		// If task has a pool slot, capture patch and release the slot
+		const pool = await getPoolForPath(options.repoPath);
+		if (pool) {
+			const slot = pool.getSlotForTask(taskId);
+			if (slot) {
+				const worktreePath = pool.slotWorktreePath(slot.slotId);
+				try {
+					await captureTaskPatch({ repoPath: options.repoPath, taskId, worktreePath });
+				} catch {
+					// Patch capture is best-effort
+				}
+				await pool.releaseSlot(taskId);
+				return { ok: true, removed: true };
+			}
+		}
+
+		// Legacy path: no pool or task not in pool
 		const rootPath = getWorktreesBaseRootPath();
 		const worktreePath = getTaskWorktreePath(options.repoPath, taskId);
 		if (!(await pathExists(worktreePath))) {
@@ -624,6 +702,14 @@ export async function resolveTaskCwd(options: {
 		return ensured.path;
 	}
 
+	// Check pool for slot-based path first
+	const normalizedTaskId = normalizeTaskIdForWorktreePath(options.taskId);
+	const slotPath = await resolveClaimedSlotPath(context.repoPath, normalizedTaskId);
+	if (slotPath && (await pathExists(slotPath))) {
+		return slotPath;
+	}
+
+	// Legacy path
 	const worktreePath = getTaskWorktreePath(context.repoPath, options.taskId);
 	if (await pathExists(worktreePath)) {
 		return worktreePath;
@@ -648,6 +734,18 @@ export async function getTaskWorkspacePathInfo(options: {
 		throw new Error("Task base branch is required for task workspace info.");
 	}
 
+	// Check pool for slot-based path first
+	const slotPath = await resolveClaimedSlotPath(repoPath, taskId);
+	if (slotPath) {
+		return {
+			taskId,
+			path: slotPath,
+			exists: await pathExists(slotPath),
+			baseRef: normalizedBaseRef,
+		};
+	}
+
+	// Legacy path
 	const worktreePath = getTaskWorktreePath(repoPath, taskId);
 	return {
 		taskId,
