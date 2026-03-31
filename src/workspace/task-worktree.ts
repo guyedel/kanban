@@ -8,6 +8,7 @@ import type {
 } from "../core/api-contract";
 import { type LockRequest, lockedFileSystem } from "../fs/locked-file-system";
 import { getRuntimeHomePath, getTaskWorktreesHomePath, loadWorkspaceContext } from "../state/workspace-state";
+import { removeStaleGitLockIfExists } from "./git-lock-cleanup";
 import { getGitCommandErrorMessage, getGitStdout, readGitHeadInfo, runGit } from "./git-utils";
 import { getWorkspaceFolderLabelForWorktreePath, normalizeTaskIdForWorktreePath } from "./task-worktree-path";
 import { listTurbopackNodeModulesSymlinkSkipPaths } from "./task-worktree-turbopack";
@@ -425,6 +426,7 @@ async function prepareNewTaskWorktree(repoPath: string, worktreePath: string): P
 
 async function removeTaskWorktreeInternal(repoPath: string, worktreePath: string): Promise<boolean> {
 	const existed = await pathExists(worktreePath);
+	await removeStaleGitLockIfExists(worktreePath);
 	const removeResult = await runGit(repoPath, ["worktree", "remove", "--force", worktreePath]);
 	if (!removeResult.ok) {
 		// If remove failed (e.g. worktree in bad state), prune stale registrations
@@ -545,6 +547,7 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 			// Recycled slot: fast-path reset of existing worktree to desired base
 			const lockedHeadCommit = await tryRunGit(worktreePath, ["rev-parse", "HEAD"]);
 			if (claim && !claim.isNew && !claim.wasAlreadyClaimed && lockedHeadCommit) {
+				await removeStaleGitLockIfExists(worktreePath);
 				const resetResult = await runGit(worktreePath, ["reset", "--hard", baseCommit]);
 				if (resetResult.ok) {
 					await runGit(worktreePath, ["clean", "-fd"]);

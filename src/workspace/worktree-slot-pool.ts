@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { WorktreePoolConfigShape } from "../config/runtime-config";
 import { type LockRequest, lockedFileSystem } from "../fs/locked-file-system";
 import { getTaskWorktreesHomePath } from "../state/workspace-state";
+import { removeStaleGitLockIfExists } from "./git-lock-cleanup";
 import { runGit } from "./git-utils";
 import { getWorkspaceFolderLabelForWorktreePath } from "./task-worktree-path";
 
@@ -401,6 +402,7 @@ export class WorktreeSlotPool {
 					success = true;
 					return;
 				}
+				await removeStaleGitLockIfExists(slotPath);
 				if (this.config.cleanupStrategy === "checkout-clean") {
 					await runGit(slotPath, ["checkout", "--detach"]);
 					await runGit(slotPath, ["clean", "-fd"]);

@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createGitProcessEnv } from "../core/git-process-env";
+import { removeStaleGitLockIfExists } from "./git-lock-cleanup";
 
 const execFileAsync = promisify(execFile);
 const GIT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+const DEFAULT_GIT_TIMEOUT_MS = 60_000;
 
 interface GitCommandResult {
 	ok: boolean;
@@ -17,6 +19,7 @@ interface GitCommandResult {
 export interface RunGitOptions {
 	trimStdout?: boolean;
 	env?: NodeJS.ProcessEnv;
+	timeoutMs?: number;
 }
 
 function normalizeProcessExitCode(code: unknown): number {
@@ -32,13 +35,18 @@ function normalizeProcessExitCode(code: unknown): number {
 	return -1;
 }
 
-export async function runGit(cwd: string, args: string[], options: RunGitOptions = {}): Promise<GitCommandResult> {
+function isIndexLockError(stderr: string): boolean {
+	return stderr.includes("index.lock") && stderr.includes("File exists");
+}
+
+async function executeGit(cwd: string, args: string[], options: RunGitOptions = {}): Promise<GitCommandResult> {
 	try {
 		const fullArgs = ["-c", "core.quotepath=false", ...args];
 		const { stdout, stderr } = await execFileAsync("git", fullArgs, {
 			cwd,
 			encoding: "utf8",
 			maxBuffer: GIT_MAX_BUFFER_BYTES,
+			timeout: options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS,
 			env: options.env || createGitProcessEnv(),
 		});
 		const normalizedStdout = String(stdout ?? "").trim();
@@ -75,6 +83,17 @@ export async function runGit(cwd: string, args: string[], options: RunGitOptions
 			exitCode,
 		};
 	}
+}
+
+export async function runGit(cwd: string, args: string[], options: RunGitOptions = {}): Promise<GitCommandResult> {
+	const result = await executeGit(cwd, args, options);
+	if (!result.ok && isIndexLockError(result.stderr)) {
+		const removed = await removeStaleGitLockIfExists(cwd);
+		if (removed) {
+			return await executeGit(cwd, args, options);
+		}
+	}
+	return result;
 }
 
 export async function getGitStdout(args: string[], cwd: string, options: RunGitOptions = {}): Promise<string> {
